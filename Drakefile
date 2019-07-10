@@ -1,0 +1,78 @@
+##/*-------------------------------------------------------------------
+##  Copyright 2020-03-11 SUN, Sheng
+##//Last Change:  2019-07-09 18:56:12
+##
+## Drakefile to split Ip.dat into training and testing dataset, 
+## to calculate Lambda, 
+## to plot Imax vs Lambda, 
+## to run GE via gdf in parallel threads. 
+##
+##The code is distributed in the hope that it will be useful,
+##but WITHOUT ANY WARRANTY; without even the implied warranty of
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+##GNU General Public License for more details.
+##
+##You should have received a copy of the GNU General Public License
+##along with the code.  If not, see <http://www.gnu.org/licenses/>.
+##----------------------------------------------------------------*/
+
+Ip.csv, %DAT2CSV <- Ip.dat
+    <$INPUT tr ' ' ',' | header -a imax,imin,dvpp,myk0,myvol,mydl,vamax,vmin,mycinit >$OUTPUT
+
+sun_data_new_lambda.csv, %Lambda <- Ip.csv
+    <$INPUT awk -F, 'NR!=1{print $1","$4","$5","$6","$9","$4/sqrt($5*$6*96485/8.314/300)}' | header -a Imax,k0,V,Dl,Ci,L > $OUTPUT
+
+Imax_L.csv, %IL <- sun_data_new_lambda.csv
+    <$INPUT awk -F, 'NR!=1{print $1","($2^0*sqrt($3*$4)*$5)","$6,","$2}' |header -a Imax,Rev,Lambda,K0> $OUTPUT
+
+%DISPLAY <-  Imax_L.csv
+    <$INPUT Rio -ge 'g+geom_point(aes(x=log(Lambda), y=Imax/Rev/2.69e5/985.6,color=K0))' | display
+
+data_GE.data, %GEDATA <- Imax_L.csv
+    <$INPUT awk -F, 'NR!=1{print log($3), $1/$2/2.69e5/985.6}' >>$OUTPUT
+
+data_GE_train.data, data_GE_test.data, %SPLIT <- data_GE.data
+    <$INPUT tail -n +3 | tr ' ' ',' > data_GE.csv
+    mlpack_preprocess_split --input_file data_GE.csv --training_file data_GE_train.csv --test_file data_GE_test.csv --test_ratio 0.98
+    lines=$(<data_GE_train.csv body wc -l |tail -1)
+    echo "1" > data_GE_train.data
+    echo "$lines" >> data_GE_train.data
+    <data_GE_train.csv tr ',' ' '>>data_GE_train.data
+    line2=$(<data_GE_test.csv body wc -l |tail -1)
+    echo "1" > data_GE_test.data
+    echo "$line2" >> data_GE_test.data
+    <data_GE_test.csv tr ',' ' '>>data_GE_test.data
+
+
+%GELOG <- data_GE_train.data
+    seq 6 | parallel "./gdf -c 800 -n 10000 -l 100 -p $INPUT -t data_GE_test.data -g grammar.txt -e 1 -r {} | tee GE-{}.log"
+
+sun_data_new_lambda_normal.csv, %ODN <- sun_data_new_lambda.csv
+    Imin=$(<$INPUT csvstat --min -c Imax)
+    Imax=$(<$INPUT csvstat --max -c Imax)
+    Kmin=$(<$INPUT csvstat --min -c k0)
+    Kmax=$(<$INPUT csvstat --max -c k0)
+    Vmin=$(<$INPUT csvstat --min -c V)
+    Vmax=$(<$INPUT csvstat --max -c V)
+    Dmin=$(<$INPUT csvstat --min -c Dl)
+    Dmax=$(<$INPUT csvstat --max -c Dl)
+    Cmin=$(<$INPUT csvstat --min -c Ci)
+    Cmax=$(<$INPUT csvstat --max -c Ci)
+    Lmin=$(<$INPUT csvstat --min -c L)
+    Lmax=$(<$INPUT csvstat --max -c L)
+    echo $Imin $Imax $Kmin $Kmax $Vmin $Vmax $Dmin $Dmax $Cmin $Cmax $Lmin $Lmax
+    <$INPUT awk -F, "NR!=1{print (\$1-${Imin})/(${Imax}-${Imin})\",\"(\$2-${Kmin})/(${Kmax}-${Kmin})\",\"(\$3-${Vmin})/(${Vmax}-${Vmin})\",\"(\$4-${Dmin})/(${Dmax}-${Dmin})\",\"(\$5-${Cmin})/(${Cmax}-${Cmin})\",\"(\$6-${Lmin})/(${Lmax}-${Lmin})}"| header -a IN,KN,VN,DN,CN,LN >$OUTPUT
+    
+
+Imax_L_normal.csv, %ILN <- sun_data_new_lambda_normal.csv
+    <$INPUT awk -F, 'NR!=1{print $1","($2^0*sqrt($3*$4)*$5)","$6,","$2}' |header -a Imax,Rev,Lambda,K0> $OUTPUT
+
+;Imax_L_normal.csv, %ILN <- Imax_L.csv
+;    Imin=$(<$INPUT csvstat --min -c Imax)
+;    Imax=$(<$INPUT csvstat --max -c Imax)
+;    Rmin=$(<$INPUT csvstat --min -c Rev)
+;    Rmax=$(<$INPUT csvstat --max -c Rev)
+;    Lmin=$(<$INPUT csvstat --min -c Lambda)
+;    Lmax=$(<$INPUT csvstat --max -c Lambda)
+;    echo $Imin $Imax $Rmin $Rmax $Lmin $Lmax
+;    <$INPUT awk "NR!=1{print (\$1-${Imin})/(${Imax}-${Imin})\",\"(\$1-${Rmin})/(${Rmax}-${Rmin})\",\"((\$3-${Lmin})/(${Lmax}-${Lmin})}"| header -a IN,RN,LN >$OUTPUT
